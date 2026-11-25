@@ -1,0 +1,29 @@
+name: AlphaMovies
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    from: 12.0.0
+options:
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  AlphaMovies:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    dependencies:
+      - package: Firebase
+        product: FirebaseMessaging
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ng.com.alphamovies.ios
+        MARKETING_VERSION: 1.0.14
+        CURRENT_PROJECT_VERSION: 2
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Alpha Movies
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Signing/AlphaMovies.entitlements
