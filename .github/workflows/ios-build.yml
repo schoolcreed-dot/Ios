@@ -1,0 +1,112 @@
+name: Alpha Movies iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      distribution:
+        description: 'Unsigned build check or signed distribution IPA'
+        type: choice
+        required: true
+        default: unsigned
+        options: [unsigned, signed]
+      export_method:
+        description: 'Signing mode (used for signed distribution only)'
+        type: choice
+        required: true
+        default: app-store-connect
+        options: [app-store-connect, ad-hoc]
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'ng.com.alphamovies.ios' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check signing requirements
+        if: inputs.distribution == 'signed'
+        shell: bash
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+          IOS_FIREBASE_PLIST_BASE64: ${{ secrets.IOS_FIREBASE_PLIST_BASE64 }}
+        run: |
+          set -euo pipefail
+          for name in IOS_TEAM_ID IOS_P12_BASE64 IOS_P12_PASSWORD IOS_PROFILE_BASE64 IOS_FIREBASE_PLIST_BASE64; do
+            if [[ -z "${!name}" ]]; then echo "Missing GitHub Actions secret: $name" >&2; exit 1; fi
+          done
+          [[ "$IOS_BUNDLE_ID" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]] || { echo 'Invalid IOS_BUNDLE_ID' >&2; exit 1; }
+          printf '%s' "$IOS_FIREBASE_PLIST_BASE64" | base64 -D > App/GoogleService-Info.plist
+          plutil -lint App/GoogleService-Info.plist
+          actual_id=$(/usr/libexec/PlistBuddy -c 'Print BUNDLE_ID' App/GoogleService-Info.plist)
+          [[ "$actual_id" == "$IOS_BUNDLE_ID" ]] || { echo 'Firebase BUNDLE_ID differs from IOS_BUNDLE_ID' >&2; exit 1; }
+
+      - name: Generate Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build unsigned IPA
+        if: inputs.distribution == 'unsigned'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          xcodebuild archive -project AlphaMovies.xcodeproj -scheme AlphaMovies \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/output/AlphaMovies.xcarchive" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee output/xcodebuild.log
+          test -d output/AlphaMovies.xcarchive/Products/Applications/AlphaMovies.app
+          mkdir -p output/package/Payload
+          ditto output/AlphaMovies.xcarchive/Products/Applications/AlphaMovies.app output/package/Payload/AlphaMovies.app
+          (cd output/package && zip -qr ../AlphaMovies-UNSIGNED.ipa Payload)
+          unzip -tq output/AlphaMovies-UNSIGNED.ipa
+          ditto -c -k --keepParent output/AlphaMovies.xcarchive output/AlphaMovies-unsigned-xcarchive.zip
+
+      - name: Build signed IPA
+        if: inputs.distribution == 'signed'
+        shell: bash
+        env:
+          EXPORT_METHOD: ${{ inputs.export_method }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+        run: bash ci/export-signed-ipa.sh
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlphaMovies-${{ inputs.distribution }}-IPA
+          path: output/*.ipa
+          if-no-files-found: error
+
+      - name: Upload unsigned archive
+        if: inputs.distribution == 'unsigned'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlphaMovies-unsigned-xcarchive
+          path: output/AlphaMovies-unsigned-xcarchive.zip
+          if-no-files-found: error
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlphaMovies-build-log
+          path: output/xcodebuild.log
+          if-no-files-found: ignore
