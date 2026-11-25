@@ -1,0 +1,73 @@
+
+name: Alpha Movies iOS Simulator
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    env:
+      IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'ng.com.alphamovies.ios' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build iOS Simulator App
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+
+          xcodebuild build \
+            -project AlphaMovies.xcodeproj \
+            -scheme AlphaMovies \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee output/xcodebuild.log
+
+      - name: Package Simulator App
+        run: |
+          APP_PATH="build/Build/Products/Debug-iphonesimulator/AlphaMovies.app"
+
+          test -d "$APP_PATH"
+
+          ditto -c -k --keepParent \
+            "$APP_PATH" \
+            output/AlphaMovies-Simulator.zip
+
+          unzip -tq output/AlphaMovies-Simulator.zip
+
+      - name: Upload Simulator App
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlphaMovies-Simulator
+          path: output/AlphaMovies-Simulator.zip
+          if-no-files-found: error
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlphaMovies-Simulator-Log
+          path: output/xcodebuild.log
+          if-no-files-found: ignore
